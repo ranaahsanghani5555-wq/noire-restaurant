@@ -1,0 +1,439 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  NOIRÉ — Prisma Schema
+//  Production restaurant backend.
+// ═══════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  STAFF
+  MANAGER
+  ADMIN
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  SEATED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  BOOKED
+  CLOSED
+}
+
+enum ContactStatus {
+  NEW
+  READ
+  REPLIED
+  CLOSED
+}
+
+enum NewsletterStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum OrderFulfillment {
+  DINE_IN
+  PICKUP
+  DELIVERY
+}
+
+enum GalleryCategory {
+  FOOD
+  DINING
+  KITCHEN
+  BAR
+  MOMENTS
+}
+
+enum BookingScope {
+  RESERVATION
+  PRIVATE_DINING
+}
+
+// ── Identities ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  passwordHash  String
+  phone         String?
+  role          UserRole  @default(CUSTOMER)
+  image         String?
+  emailVerified DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions     Session[]
+  reservations Reservation[]
+  orders       Order[]
+  auditLogs    AuditLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ── Restaurant configuration ───────────────────────────────────────────────
+
+model RestaurantSettings {
+  id                Int      @id @default(1)
+  name              String
+  tagline           String?
+  addressLine       String?
+  city              String?
+  phone             String?
+  email             String?
+  timezone          String   @default("America/New_York")
+  currency          String   @default("USD")
+  taxRate           Decimal  @default(0) @db.Decimal(5, 4)
+  serviceFee        Decimal  @default(0) @db.Decimal(5, 4)
+  deliveryFee       Decimal  @default(0) @db.Decimal(8, 2)
+  reservationDurationMin Int @default(90)
+  reservationBufferMin   Int @default(15)
+  minPartySize       Int @default(1)
+  maxPartySize       Int @default(12)
+  updatedAt         DateTime @updatedAt
+}
+
+model OpeningHours {
+  id         String @id @default(cuid())
+  dayOfWeek  Int // 0=Sunday ... 6=Saturday
+  openTime   String // "17:00"
+  closeTime  String // "23:00"
+  isOpen     Boolean @default(true)
+
+  @@index([dayOfWeek])
+}
+
+model Closure {
+  id        String @id @default(cuid())
+  date      DateTime @db.Date
+  reason    String?
+  scope     BookingScope @default(RESERVATION)
+
+  @@index([date])
+}
+
+// ── Tables & reservations ──────────────────────────────────────────────────
+
+model DiningTable {
+  id        String @id @default(cuid())
+  name      String
+  capacity  Int
+  location  String?
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations Reservation[]
+
+  @@index([isActive])
+}
+
+model Reservation {
+  id            String            @id @default(cuid())
+  userId        String?
+  guestName     String
+  email         String
+  phone         String?
+  date          DateTime          @db.Date
+  startTime     String            // "18:30"
+  endTime       String            // "20:00"
+  partySize     Int
+  tableId       String?
+  status        ReservationStatus @default(PENDING)
+  occasion      String?
+  specialRequest String?
+  notes         String?
+  source        String            @default("web")
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  user  User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  table DiningTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([date])
+  @@index([status])
+  @@index([tableId])
+  @@index([userId])
+}
+
+// ── Menu ───────────────────────────────────────────────────────────────────
+
+model MenuCategory {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items MenuItem[]
+
+  @@index([isActive])
+  @@index([slug])
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  categoryId  String
+  name        String
+  slug        String
+  description String?
+  price       Decimal  @db.Decimal(8, 2)
+  image       String?
+  ingredients String[] @default([])
+  allergens   String[] @default([])
+  dietary     String[] @default([])
+  featured    Boolean  @default(false)
+  available   Boolean  @default(true)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  orderItems OrderItem[]
+
+  @@unique([categoryId, slug])
+  @@index([isActive])
+  @@index([available])
+  @@index([featured])
+}
+
+// ── Gallery ────────────────────────────────────────────────────────────────
+
+model GalleryImage {
+  id          String          @id @default(cuid())
+  title       String
+  imageUrl    String
+  publicId    String?
+  altText     String?
+  category    GalleryCategory @default(FOOD)
+  sortOrder   Int             @default(0)
+  isPublished Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([category])
+  @@index([isPublished])
+}
+
+// ── Testimonials ───────────────────────────────────────────────────────────
+
+model Testimonial {
+  id           String   @id @default(cuid())
+  customerName String
+  quote        String
+  rating       Int      @default(5)
+  image        String?
+  isPublished  Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([isPublished])
+}
+
+// ── Inquiries ──────────────────────────────────────────────────────────────
+
+model PrivateDiningInquiry {
+  id         String        @id @default(cuid())
+  name       String
+  email      String
+  phone      String?
+  eventDate  DateTime?     @db.Date
+  guestCount Int?
+  eventType  String?
+  budget     String?
+  message    String?
+  status     InquiryStatus @default(NEW)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+model ContactMessage {
+  id      String        @id @default(cuid())
+  name    String
+  email   String
+  phone   String?
+  subject String?
+  message String
+  status  ContactStatus @default(NEW)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+model NewsletterSubscriber {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  status         NewsletterStatus @default(SUBSCRIBED)
+  subscribedAt   DateTime         @default(now())
+  unsubscribedAt DateTime?
+
+  @@index([email])
+  @@index([status])
+}
+
+// ── Orders & cart ──────────────────────────────────────────────────────────
+
+model Cart {
+  id          String @id @default(cuid())
+  userId      String? @unique
+  guestToken  String? @unique
+  currency    String @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items CartItem[]
+
+  @@index([userId])
+  @@index([guestToken])
+}
+
+model CartItem {
+  id        String   @id @default(cuid())
+  cartId    String
+  itemId    String?
+  name      String
+  unitPrice Decimal  @db.Decimal(8, 2)
+  quantity  Int
+  createdAt DateTime @default(now())
+
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+}
+
+model Order {
+  id            String          @id @default(cuid())
+  number        String          @unique
+  userId        String?
+  customerEmail String?
+  customerName  String?
+  fulfillment   OrderFulfillment @default(DINE_IN)
+  status        OrderStatus     @default(PENDING)
+  paymentStatus PaymentStatus   @default(UNPAID)
+  subtotal      Decimal         @db.Decimal(10, 2)
+  tax           Decimal         @db.Decimal(10, 2)
+  serviceFee    Decimal         @db.Decimal(10, 2) @default(0)
+  deliveryFee   Decimal         @db.Decimal(10, 2) @default(0)
+  discount      Decimal         @db.Decimal(10, 2) @default(0)
+  total         Decimal         @db.Decimal(10, 2)
+  currency      String          @default("USD")
+  stripeSessionId String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  user  User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items OrderItem[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([number])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  itemId    String?
+  name      String
+  unitPrice Decimal  @db.Decimal(8, 2)
+  quantity  Int
+  lineTotal Decimal  @db.Decimal(10, 2)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([itemId])
+}
+
+// ── Audit ──────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorRole UserRole?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
